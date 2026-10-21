@@ -1,0 +1,237 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>ÚLTIMO LATIDO</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--pink:#f6b8cf;--mint:#b8ecd6;--lav:#cbb8f0;--yel:#fbefb0;--red:#d6303f;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0;background:#14121c;color:#f4eef0;font-family:system-ui,Segoe UI,sans-serif}
+#wrap{position:relative;width:min(100%,960px);margin:0 auto}
+canvas{display:block;width:100%;height:auto;background:#14121c}
+#ui{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;overflow:auto}
+.pan{background:rgba(20,18,28,.88);border:2px solid var(--lav);border-radius:16px;padding:14px 18px;max-width:92%;max-height:96%;overflow:auto}
+h1{margin:0;font-size:clamp(26px,6vw,54px);color:var(--pink);letter-spacing:3px;text-shadow:0 0 14px #d6303f}
+h2{margin:4px 0 8px;color:var(--mint)}
+button{background:var(--pink);color:#2a1830;border:0;border-radius:10px;padding:9px 16px;margin:4px;font-weight:700;font-size:15px;cursor:pointer}
+button:hover{background:var(--yel)}button:disabled{opacity:.35;cursor:default}
+button.big{font-size:20px;padding:12px 28px;background:var(--mint)}
+button.opt{display:block;width:100%;text-align:left;background:var(--lav)}
+button.ok{background:#7fe0a8}button.no{background:#f08a94}
+#hud{position:absolute;top:0;left:0;right:0;display:none;justify-content:space-between;gap:8px;padding:4px 8px;font-size:13px;background:rgba(0,0,0,.55);align-items:center}
+.bar{display:inline-block;width:110px;height:12px;background:#432;border-radius:6px;vertical-align:middle;overflow:hidden}
+#hp{display:block;height:100%;background:var(--red);width:100%}
+#dp{position:absolute;right:8px;bottom:8px;display:none;grid-template-columns:repeat(3,44px);gap:3px}
+#dp button{margin:0;padding:8px 0;font-size:18px}
+@media(pointer:coarse){#dp.on{display:grid}}
+.grid{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
+.grid button{margin:0;padding:6px 2px;font-size:13px}
+button.mn{box-shadow:0 3px 0 #8b1a2b;border:1px solid #fff4}small{opacity:.75}details{text-align:left;margin:4px 0;background:#2a2538;padding:6px;border-radius:8px}
+</style></head><body>
+<div id="wrap"><canvas id="c"></canvas><div id="hud"></div><div id="ui"></div>
+<div id="dp"><span></span><button data-d="0,-1">▲</button><span></span><button data-d="-1,0">◀</button><button data-d="0,1">▼</button><button data-d="1,0">▶</button></div></div>
+<script>
+const W=21,H=15,T=30,D4=[[1,0],[-1,0],[0,1],[0,-1]];
+const cv=document.getElementById('c');let g=cv.getContext('2d');cv.width=W*T;cv.height=H*T;
+const $=i=>document.getElementById(i);
+let S={mus:.6,sfx:.7,calm:false},P={unlocked:1,done:{},ans:{},cu:{hs:0,hc:0,uc:0,ac:0,sk:0}};
+try{Object.assign(S,JSON.parse(localStorage.ul_s||'{}'));Object.assign(P,JSON.parse(localStorage.ul_p||'{}'))}catch(e){}
+const save=()=>{try{localStorage.ul_s=JSON.stringify(S);localStorage.ul_p=JSON.stringify(P)}catch(e){}};
+/* ---------- AUDIO ---------- */
+let AC,mg,sg,mode='',bi=0;
+function ainit(){if(AC)return;try{AC=new(window.AudioContext||window.webkitAudioContext)();mg=AC.createGain();sg=AC.createGain();mg.connect(AC.destination);sg.connect(AC.destination);vol();setInterval(beat2,240)}catch(e){AC=null}}
+function vol(){if(AC){mg.gain.value=S.mus*.3;sg.gain.value=S.sfx*.5}}
+function tone(f,d,ty='square',dest,v=.3,sl=0){if(!AC)return;dest=dest||sg;const t=AC.currentTime,o=AC.createOscillator(),e=AC.createGain();o.type=ty;o.frequency.setValueAtTime(f,t);if(sl)o.frequency.exponentialRampToValueAtTime(Math.max(30,f+sl),t+d);e.gain.setValueAtTime(v,t);e.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(e);e.connect(dest);o.start(t);o.stop(t+d)}
+const sfx={pick:()=>{tone(660,.1);setTimeout(()=>tone(990,.12),70)},hit:()=>tone(180,.35,'sawtooth',0,.5,-120),ok:()=>{tone(523,.12);setTimeout(()=>tone(784,.2),110)},bad:()=>tone(150,.35,'sawtooth',0,.4,-60),near:()=>tone(90,.2,'sawtooth',0,.3),win:()=>[523,659,784,1046].forEach((f,i)=>setTimeout(()=>tone(f,.25,'triangle'),i*140)),lose:()=>[392,330,262,196].forEach((f,i)=>setTimeout(()=>tone(f,.35,'sawtooth'),i*220)),door:()=>tone(300,.25,'square',0,.3,200)};
+const sc=[0,3,5,7,10,12];
+function beat(){if(!AC||!mode)return;bi++;const ch=mode=='chase',b=mode=='menu'?196:ch?131:110;
+ if(ch||bi%2==0)tone(b*Math.pow(2,sc[(bi*(ch?3:1))%6]/12),.22,ch?'sawtooth':'triangle',mg,.5);
+ if(ch&&bi%2==0)tone(b/2,.12,'square',mg,.6);if(!ch&&bi%8==0)tone(b/2,.8,'sine',mg,.5)}
+/* ---------- DATOS ---------- */
+const STG=['EL BROTE','HOSPITAL INFECTADO','MATERNIDAD ABANDONADA','ZONA DE AISLAMIENTO','FARMACIA Y SUMINISTROS','EMERGENCIAS OBSTÉTRICAS','EL REFUGIO SANITARIO','ÚLTIMO LATIDO'];
+const PAL=[['#6d6a8c','#2a2838'],['#7a6a8c','#262335'],['#c98aa8','#33242f'],['#5f7f8f','#1c2630'],['#7fa890','#1f2d29'],['#a86a7a','#2d1f27'],['#8c8a6a','#2a2a1f'],['#8a5a6a','#1a1118']];
+const N5=['Recepción','Pasillos de consulta','Urgencias','Área de observación','Primer rescate'];
+const lname=n=>n<=5?N5[n-1]:STG[(n-1)/5|0]+' · sector '+((n-1)%5+1);
+const ZT=['#8fbf7a','#d9a441','#7fb0c9','#b27fd1','#d96a6a'],ZN=['Común','Veloz','Patrullero','Sensible al ruido','Perseguidor'];
+const CASES=[
+['PN-005','Anemia en el control prenatal','Gestante de 28 semanas, cansada y pálida. Hemoglobina: 9 g/dL.',['Normal para el embarazo','Anemia leve','Anemia moderada','Anemia grave'],2,'Según la OMS, en gestantes la anemia se define con Hb &lt;11 g/dL (1.º y 3.er trimestre); es leve 10–10,9, moderada 7–9,9 y grave &lt;7 g/dL. 9 g/dL es anemia moderada: requiere estudio, tratamiento y seguimiento.'],
+['PN-001','Suplementación','Gestante de 7 semanas, sin antecedentes. Pregunta qué suplementos necesita.',['Ninguno si come bien','Solo vitamina C','Hierro y ácido fólico diarios, según la norma local','Antibiótico preventivo'],2,'La OMS recomienda hierro y ácido fólico diarios durante el embarazo como parte de la atención prenatal. Siga siempre la norma local vigente.'],
+['PN-014','Signos de alarma hipertensivos','Gestante de 34 semanas: cefalea intensa, luces en la visión. PA 160/110 mmHg.',['Reposo en casa y control en una semana','Paracetamol y alta','Reconocer signos de alarma de preeclampsia grave y activar atención urgente / derivación','Dieta sin sal'],2,'PA ≥160/110 con síntomas sugiere preeclampsia con signos de gravedad: es una emergencia. Requiere atención urgente por personal calificado según protocolo (p. ej., sulfato de magnesio y control de la PA).'],
+['PN-022','Movimientos fetales','A las 36 semanas refiere que el bebé se mueve mucho menos desde ayer.',['Tranquilizar y esperar una semana','Evaluar el bienestar fetal de forma urgente','Beber algo dulce y reevaluar mañana','Indicar más reposo y nada más'],1,'La disminución de movimientos fetales es un signo de alarma. Debe evaluarse sin demora (auscultación/monitorización y valoración clínica) y derivarse si hay dudas.'],
+['CM-050','Rotura de membranas con fiebre','Gestante de 35 semanas: salida de líquido hace 4 h, fiebre 38,2 °C, útero doloroso.',['Alta con medidas domiciliarias','Considerar infección intraamniótica: derivación urgente a nivel resolutivo','Solo antitérmico','Tacto vaginal repetido cada hora'],1,'Fiebre con rotura de membranas hace sospechar corioamnionitis: requiere atención urgente. Evitar tactos innecesarios por el riesgo de infección.'],
+['PP-030','Sangrado tras el parto','Veinte minutos después del parto: sangrado abundante, útero blando.',['Observar sin intervenir','Dar de alta para descansar','Pedir ayuda, masaje uterino y activar el protocolo de hemorragia posparto','Aplicar frío en el abdomen'],2,'La atonía uterina es la causa más frecuente. Se pide ayuda de inmediato y se aplica el protocolo del equipo (masaje uterino, uterotónicos, vía venosa, reposición, ácido tranexámico según norma).'],
+['RN-045','Recién nacido vigoroso','Recién nacido a término, llora y tiene buen tono.',['Separarlo para pesarlo y bañarlo','Aspirar boca y nariz de rutina','Secar, abrigar y colocar piel con piel con la madre','Dejarlo solo en la cuna'],2,'Con un recién nacido vigoroso se recomienda secar, abrigar y contacto piel con piel inmediato, favoreciendo la termorregulación y el inicio de la lactancia. El baño se retrasa.'],
+['ET-080','Consentimiento informado','La paciente rechaza una exploración vaginal que usted consideraba necesaria.',['Realizarla igualmente','Explicar riesgos y beneficios, respetar su decisión informada y documentarla','Amenazarla con dejar de atenderla','Ignorar su respuesta'],1,'La atención respetuosa exige consentimiento informado y respeto a la autonomía. Se informa con claridad, se ofrecen alternativas y se registra la decisión.']];
+/* ---------- LABERINTO ---------- */
+function rng(s){return()=>(s=(s*1664525+1013904223)>>>0)/4294967296}
+function gen(n){const r=rng(n*7919+13),m=[];for(let y=0;y<H;y++)m.push(Array(W).fill(1));
+ const st=[[1,1]];m[1][1]=0;
+ while(st.length){const[x,y]=st[st.length-1];const d=D4.map(([a,b])=>[a*2,b*2]).filter(([a,b])=>{const nx=x+a,ny=y+b;return nx>0&&ny>0&&nx<W-1&&ny<H-1&&m[ny][nx]});
+  if(!d.length){st.pop();continue}const[a,b]=d[r()*d.length|0];m[y+b/2][x+a/2]=0;m[y+b][x+a]=0;st.push([x+a,y+b])}
+ for(let i=0,k=0;i<400&&k<12;i++){const x=1+(r()*(W-2)|0),y=1+(r()*(H-2)|0);if(m[y][x]&&((!m[y][x-1]&&!m[y][x+1])||(!m[y-1][x]&&!m[y+1][x]))){m[y][x]=0;k++}}
+ for(let i=0;i<2+(n/8|0);i++){const x=1+(r()*17|0),y=1+(r()*11|0);for(let a=0;a<3;a++)for(let b=0;b<3;b++)m[y+b][x+a]=0}
+ return m}
+function flood(m){const d=m.map(r=>r.map(()=>-1));d[1][1]=0;const q=[[1,1]];for(let i=0;i<q.length;i++){const[x,y]=q[i];for(const[a,b]of D4){const nx=x+a,ny=y+b;if(!m[ny][nx]&&d[ny][nx]<0){d[ny][nx]=d[y][x]+1;q.push([nx,ny])}}}return d}
+/* ---------- ENTIDADES ---------- */
+let L=null,want=[0,0],G=false,st='menu',last=0,T0=0;
+const free=(x,y)=>x>=0&&y>=0&&x<W&&y<H&&L.m[y][x]==0;
+const ent=(x,y,sp)=>({x,y,nx:x,ny:y,t:1,sp,dx:0,dy:0});
+const pp=e=>[e.x+(e.nx-e.x)*e.t,e.y+(e.ny-e.y)*e.t];
+function adv(e,dt,ch){let rem=e.sp*dt;while(rem>0){if(e.t>=1){e.x=e.nx;e.y=e.ny;e.t=0;const d=ch(e);if(d&&free(e.x+d[0],e.y+d[1])){e.dx=d[0];e.dy=d[1];e.nx=e.x+d[0];e.ny=e.y+d[1]}else{e.nx=e.x;e.ny=e.y;e.t=1;e.dx=e.dy=0;return}}const s=Math.min(rem,1-e.t);e.t+=s;rem-=s}}
+function stepTo(x,y,tx,ty){if(x==tx&&y==ty)return null;const s=y*W+x,q=[[x,y]],pr={[s]:-1};for(let i=0;i<q.length;i++){const[cx,cy]=q[i];if(cx==tx&&cy==ty)break;for(const[a,b]of D4){const nx=cx+a,ny=cy+b;if(free(nx,ny)&&!((ny*W+nx)in pr)){pr[ny*W+nx]=cy*W+cx;q.push([nx,ny])}}}
+ let c=ty*W+tx;if(!(c in pr))return null;while(pr[c]!==s)c=pr[c];return[c%W-x,(c/W|0)-y]}
+function rnd(z){const o=D4.filter(([a,b])=>free(z.x+a,z.y+b));if(!o.length)return null;const f=o.filter(([a,b])=>!(a==-z.dx&&b==-z.dy&&(a||b)));const p=f.length?f:o;return p[Math.random()*p.length|0]}
+function zch(z){const p=L.pl,[a,b]=pp(p),px=Math.round(a),py=Math.round(b),d=Math.abs(px-z.x)+Math.abs(py-z.y);let t=[px,py];
+ if(z.ty==3&&L.noise){t=L.noise;if(z.x==t[0]&&z.y==t[1])L.noise=null}
+ else if((z.ty==2&&d>7)||(z.ty==3&&d>5))return rnd(z);
+ else if(z.ty==4){for(let i=4;i>0;i--)if(free(px+p.dx*i,py+p.dy*i)){t=[px+p.dx*i,py+p.dy*i];break}}
+ return stepTo(z.x,z.y,t[0],t[1])||rnd(z)}
+function pch(e){if((want[0]||want[1])&&free(e.x+want[0],e.y+want[1]))return want;if((e.dx||e.dy)&&free(e.x+e.dx,e.y+e.dy))return[e.dx,e.dy];return null}
+function setDir(d){want=d;const p=L&&L.pl;if(p&&p.t<1&&d[0]==-p.dx&&d[1]==-p.dy&&(d[0]||d[1])){[p.x,p.nx]=[p.nx,p.x];[p.y,p.ny]=[p.ny,p.y];p.t=1-p.t;p.dx=d[0];p.dy=d[1]}}
+/* ---------- NIVEL ---------- */
+function startLevel(n){ainit();const r=rng(n*31+5),m=gen(n),D=flood(m),fl=[];
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(!m[y][x])fl.push([x,y,D[y][x]]);
+ const far=fl.slice().sort((a,b)=>b[2]-a[2]),pat=far[0],used=new Set(['1,1',pat[0]+','+pat[1]]);
+ const pick=min=>{const c=fl.filter(f=>f[2]>=min&&!used.has(f[0]+','+f[1]));const f=c[r()*c.length|0]||fl[fl.length-1];used.add(f[0]+','+f[1]);return f};
+ const need=Math.min(3+((n-1)/5|0),8),items=[{x:1,y:1,k:'e',on:true},{x:pat[0],y:pat[1],k:'p',on:true}];
+ for(let i=0;i<need;i++){const f=pick(4);items.push({x:f[0],y:f[1],k:'s',on:true})}
+ for(let i=0;i<1+(n>10)+(n>25);i++){const f=pick(3);items.push({x:f[0],y:f[1],k:'m',on:true})}
+ const sg=(n-1)/5|0,av=[[0],[0,1],[0,1,2],[0,1,2,3],[0,1,2,3],[0,1,2,3,4],[0,1,2,3,4],[0,1,2,3,4]][sg],nz=n==1?0:Math.min(1+((n-1)/6|0)+(n>20),6),z=[];
+ for(let i=0;i<nz;i++){const f=pick(10),ty=av[i%av.length],e=ent(f[0],f[1],[2.3+n*.03,3+n*.025,2.2+n*.03,2.5+n*.03,2.4+n*.03][ty]);e.sp=Math.min(e.sp,3.9);e.ty=ty;z.push(e)}
+ L={n,m,items,z,pl:ent(1,1,4.2),need,got:0,hp:100,resc:false,inv:0,time:0,noise:null,parts:[],shake:0,flash:0,toast:n==1?'Usa las flechas o WASD. Recoge todos los suministros (cajas), rescata al paciente (!) y vuelve a la salida.':'',tt:6,cs:0,bad:0,ok:0,meds:0};
+ want=[0,0];G=true;st='play';mode='play';$('ui').innerHTML='';$('hud').style.display='flex';$('dp').className='on'}
+function toast(t){L.toast=t;L.tt=3.5}
+function openCase(){st='case';const i=(L.n-1)%CASES.length,c=CASES[i];
+ ui(`<div class="pan" style="max-width:640px"><small>CASO ${c[0]} · ${lname(L.n)}</small><h2>${c[1]}</h2><p style="text-align:left">${c[2]}</p>${c[3].map((o,j)=>`<button class="opt" onclick="ans(${i},${j})">${'ABCD'[j]}) ${o}</button>`).join('')}<small>Juego educativo: no sustituye formación, protocolos locales ni juicio clínico.</small></div>`)}
+function ans(i,j){const c=CASES[i],ok=j==c[4];P.ans[c[0]]=ok?1:0;save();L.cs++;if(ok){L.ok++;L.hp=Math.min(100,L.hp+25);sfx.ok()}else{L.bad++;L.hp=Math.max(15,L.hp-25);sfx.bad()}
+ ui(`<div class="pan" style="max-width:640px"><h2>${ok?'✔ Correcto':'✘ No es la mejor opción'}</h2><p style="text-align:left"><b>Respuesta adecuada:</b> ${c[3][c[4]]}</p><p style="text-align:left">${c[5]}</p><small>${ok?'Recuperas 25 de salud.':'Pierdes 25 de salud, pero el paciente se rescata: equivocarse sirve para aprender.'}</small><br><button onclick="afterCase()">Continuar</button></div>`)}
+function afterCase(){L.resc=true;L.items.find(i=>i.k=='p').on=false;sfx.door();toast('¡Paciente rescatado! Vuelve a la salida (inicio del mapa).');$('ui').innerHTML='';st='play'}
+function endLevel(w){st=w?'win':'lose';mode='menu';w?sfx.win():sfx.lose();const n=L.n;
+ if(w){P.done[n]=1;P.unlocked=Math.max(P.unlocked,Math.min(40,n+1));save()}
+ const fin=w&&n==40,rate=Object.values(P.ans).filter(v=>v).length;
+ ui(`<div class="pan"><h2>${w?(fin?'¡Fin de ÚLTIMO LATIDO!':'Nivel superado'):'Has caído…'}</h2>${fin?`<p>El refugio late de nuevo. Rescataste ${Object.keys(P.done).length} sectores y respondiste correctamente ${rate} casos distintos. ${rate>=6?'Final A: la comunidad confía en tu criterio clínico.':'Final B: sobrevivís, pero queda mucho por aprender. Repasa los casos fallados.'}</p>`:''}<p>Tiempo: ${L.time|0}s · Salud: ${L.hp|0} · Suministros: ${L.got}/${L.need} · Casos: ${L.ok}/${L.cs}</p>
+ ${w&&n<40?`<button class="big" onclick="startLevel(${n+1})">Siguiente nivel</button>`:''}<button onclick="startLevel(${n})">${w?'Repetir':'Reintentar'}</button><button onclick="menu()">Menú</button></div>`)}
+function ui(h){$('ui').innerHTML=h}
+/* ---------- ACTUALIZACIÓN ---------- */
+function update(dt){const l=L,p=l.pl;l.time+=dt;l.tt-=dt;l.inv-=dt;l.flash-=dt;l.shake-=dt;
+ adv(p,dt,pch);let tense=false;
+ for(const z of l.z){adv(z,dt,zch);const[a,b]=pp(z),[c,d]=pp(p),dist=Math.hypot(a-c,b-d);if(dist<5)tense=true;
+  if(dist<.6&&l.inv<=0){l.hp-=25;l.inv=1.6;l.flash=.3;l.shake=.25;sfx.hit();if(l.hp<=0){l.hp=0;endLevel(false);return}}}
+ mode=tense?'chase':'play';if(tense&&(l.time*2|0)!=((l.time-dt)*2|0))sfx.near();
+ const[px,py]=pp(p);
+ for(const it of l.items){if(!it.on&&it.k!='e')continue;if(Math.hypot(it.x-px,it.y-py)>.55)continue;
+  if(it.k=='s'){it.on=false;l.got++;l.noise=[it.x,it.y];sfx.pick();for(let i=0;i<8;i++)l.parts.push({x:it.x,y:it.y,vx:Math.random()-.5,vy:Math.random()-.5,l:.6});if(l.got==l.need)toast('Suministros completos. Busca al paciente (!).')}
+  else if(it.k=='m'){it.on=false;l.hp=Math.min(100,l.hp+30);l.meds++;sfx.pick();toast('Botiquín: +30 de salud')}
+  else if(it.k=='p'){if(l.got<l.need){if(l.tt<=2.5)toast(`Necesitas todos los suministros (${l.got}/${l.need}) para asistir.`)}else{openCase();return}}
+  else if(it.k=='e'&&l.resc){endLevel(true);return}}
+ l.parts.forEach(q=>{q.x+=q.vx*dt*3;q.y+=q.vy*dt*3;q.l-=dt});l.parts=l.parts.filter(q=>q.l>0)}
+/* ---------- DIBUJO ---------- */
+function hero(x,y,r,t,hurt){g.save();g.translate(x,y);g.fillStyle=hurt?'#fff':'#f6b8cf';const by=Math.sin(t*10)*1.5;g.beginPath();g.arc(0,by,r,0,7);g.fill();
+ g.fillStyle='#b8ecd6';g.fillRect(-r*.7,r*.35+by,r*1.4,r*.6);g.fillStyle='#fff';g.fillRect(-r*.8,-r*1.05+by,r*1.6,r*.5);g.fillStyle='#d6303f';g.fillRect(-1.5,-r*1.0+by,3,r*.4);g.fillRect(-r*.2,-r*.85+by,r*.4,3);
+ g.fillStyle='#222';g.fillRect(-r*.4,-r*.2+by,3,3);g.fillRect(r*.25,-r*.2+by,3,3);g.restore()}
+function zomb(x,y,r,c,t){g.save();g.translate(x,y);const by=Math.sin(t*6+x)*1.5;g.fillStyle=c;g.beginPath();g.arc(0,by,r,0,7);g.fill();g.fillRect(-r*1.2,by-2,r*.5,4);g.fillRect(r*.7,by-2,r*.5,4);
+ g.fillStyle='#d6303f';g.fillRect(-r*.5,-r*.3+by,4,4);g.fillRect(r*.2,-r*.3+by,4,4);g.fillStyle='#200';g.fillRect(-r*.4,r*.25+by,r*.8,3);g.restore()}
+function cover(t){g.fillStyle='#1d1a2b';g.fillRect(0,0,cv.width,cv.height);g.fillStyle='#2b2640';for(let i=0;i<5;i++)g.fillRect(40+i*120,30,70,100);g.fillStyle='#fbefb0';g.globalAlpha=.4+Math.sin(t)*.1;g.fillRect(70,50,30,30);g.globalAlpha=1;
+ g.fillStyle='#3a3550';g.fillRect(0,330,cv.width,120);g.fillStyle='#cfc8d6';g.fillRect(430,320,100,22);g.fillRect(440,342,6,26);g.fillRect(514,342,6,26);
+ zomb(90,330+Math.sin(t*2)*4,26,ZT[0],t);zomb(200,350,22,ZT[2],t+1);zomb(540,300,22,ZT[4],t+2);zomb(590,350,26,ZT[1],t+3);hero(320,300+Math.sin(t*3)*3,52,0,0)}
+function draw(t){if(!G||!L){(SCN=='intro'?introDraw:cover)(t);return}const l=L,pal=PAL[(l.n-1)/5|0];g.save();if(l.shake>0&&!S.calm)g.translate((Math.random()-.5)*6,(Math.random()-.5)*6);
+ g.fillStyle=pal[1];g.fillRect(0,0,cv.width,cv.height);
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(l.m[y][x]){g.fillStyle=pal[0];g.beginPath();g.roundRect(x*T+1,y*T+1,T-2,T-2,5);g.fill();if((x*7+y*3)%11==0){g.fillStyle='#fff3';g.fillRect(x*T+11,y*T+8,8,3);g.fillRect(x*T+13,y*T+6,4,7)}}
+ for(const it of l.items){const x=it.x*T+T/2,y=it.y*T+T/2;if(it.k=='e'){g.fillStyle=l.resc?'#b8ecd6':'#555';g.fillRect(x-11,y-12,22,24);g.fillStyle='#143';g.font='bold 9px sans-serif';g.textAlign='center';g.fillText('SALIDA',x,y+3)}
+  else if(it.on){const b=Math.sin(t*5+it.x)*2;if(it.k=='s'){g.fillStyle='#fbefb0';g.fillRect(x-8,y-8+b,16,16);g.fillStyle='#d6303f';g.fillRect(x-2,y-6+b,4,12);g.fillRect(x-6,y-2+b,12,4)}
+   else if(it.k=='m'){g.fillStyle='#b8ecd6';g.fillRect(x-9,y-7+b,18,14);g.fillStyle='#fff';g.fillRect(x-2,y-5+b,4,10);g.fillRect(x-5,y-2+b,10,4)}
+   else{g.fillStyle='#cbb8f0';g.beginPath();g.arc(x,y+b,11,0,7);g.fill();g.fillStyle='#d6303f';g.font='bold 16px sans-serif';g.textAlign='center';g.fillText('!',x,y+6+b)}}}
+ l.parts.forEach(q=>{g.fillStyle='#fbefb0';g.fillRect(q.x*T+T/2,q.y*T+T/2,3,3)});
+ for(const z of l.z){const[a,b]=pp(z);zomb(a*T+T/2,b*T+T/2,11,ZT[z.ty],t)}
+ const[a,b]=pp(l.pl);if(l.inv<=0||(t*12|0)%2)hero(a*T+T/2,b*T+T/2,11,l.pl.dx||l.pl.dy?t:0,l.inv>1.3);
+ if([3,6,7].includes((l.n-1)/5|0)){const gr=g.createRadialGradient(a*T+T/2,b*T+T/2,40,a*T+T/2,b*T+T/2,170);gr.addColorStop(0,'rgba(0,0,0,0)');gr.addColorStop(1,'rgba(0,0,0,.93)');g.fillStyle=gr;g.fillRect(0,0,cv.width,cv.height)}
+ if(l.flash>0&&!S.calm){g.fillStyle='rgba(214,48,63,'+l.flash*1.5+')';g.fillRect(0,0,cv.width,cv.height)}
+ if(mode=='chase'&&!S.calm){g.strokeStyle='rgba(214,48,63,'+(.3+Math.sin(t*10)*.2)+')';g.lineWidth=6;g.strokeRect(3,3,cv.width-6,cv.height-6)}
+ if(l.tt>0&&l.toast){g.fillStyle='rgba(0,0,0,.75)';g.fillRect(0,cv.height-34,cv.width,28);g.fillStyle='#fff';g.font='13px sans-serif';g.textAlign='center';g.fillText(l.toast,cv.width/2,cv.height-15)}
+ g.restore();
+ $('hud').innerHTML=`<span>Nv ${l.n}: ${lname(l.n)}</span><span>❤ <span class="bar"><span id="hp" style="width:${l.hp}%"></span></span></span><span>${l.resc?'Vuelve a la SALIDA':l.got<l.need?`Suministros ${l.got}/${l.need}`:'Rescata al paciente (!)'}</span><button style="margin:0;padding:3px 10px" onclick="pause()">⏸</button>`}
+function loop(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;if(st=='play')update(dt);draw(ts/1000);requestAnimationFrame(loop)}
+/* ---------- MENÚS ---------- */
+function menu(){G=false;st='menu';mode='menu';$('hud').style.display='none';$('dp').className='';
+ ui(`<div class="pan"><h1>ÚLTIMO LATIDO</h1><p style="margin:4px">Obstetricia · laberintos · zombis</p><button class="big" onclick="newGame()">INICIAR JUEGO</button><br>
+ <button onclick="startLevel(${P.unlocked})" ${P.unlocked>1?'':'disabled'}>Continuar (nivel ${P.unlocked})</button><button onclick="levels()">Niveles</button><button onclick="cases()">Casos clínicos</button><button onclick="conf()">Configuración</button><button onclick="cred()">Créditos</button>
+ <br><small>Juego educativo: no sustituye la formación profesional, los protocolos locales ni el juicio clínico.</small></div>`)}
+let isl=0;const SL=[['2026: una infección vacía los hospitales y los equipos de emergencia pierden contacto.','Un pequeño grupo sanitario se refugia, pero hay pacientes atrapados en los sectores del hospital.','Eres obstetra. Evita a los zombis, recoge suministros, rescata pacientes y decide con criterio clínico. Cada latido cuenta.']][0];
+function newGame(){ainit();isl=0;intro()}
+function intro(){ui(`<div class="pan" style="max-width:520px"><h2>Introducción</h2><p>${SL[isl]}</p>${isl<2?'<button onclick="isl++;intro()">Siguiente</button>':'<button class="big" onclick="startLevel(1)">Comenzar</button>'}<button onclick="startLevel(1)">Omitir</button></div>`)}
+function levels(){let h='<div class="pan"><h2>Selección de niveles</h2><div class="grid">';for(let i=1;i<=40;i++)h+=`<button ${i>P.unlocked?'disabled':''} onclick="startLevel(${i})">${P.done[i]?'✔':''}${i}</button>`;ui(h+'</div><button onclick="menu()">Volver</button></div>')}
+function cases(){ui(`<div class="pan" style="max-width:660px"><h2>Casos clínicos (${CASES.length} en esta versión)</h2>${CASES.map(c=>`<details><summary>${c[0]} · ${c[1]} ${P.ans[c[0]]===1?'✔':P.ans[c[0]]===0?'✘ repasar':''}</summary><p>${c[2]}</p><p><b>Adecuada:</b> ${c[3][c[4]]}</p><p>${c[5]}</p></details>`).join('')}<button onclick="menu()">Volver</button></div>`)}
+function conf(){ui(`<div class="pan"><h2>Configuración</h2><p>Música <input type="range" min="0" max="1" step=".05" value="${S.mus}" oninput="S.mus=+this.value;vol();save()"></p><p>Efectos <input type="range" min="0" max="1" step=".05" value="${S.sfx}" oninput="S.sfx=+this.value;vol();save();sfx.pick()"></p><p><label><input type="checkbox" ${S.calm?'checked':''} onchange="S.calm=this.checked;save()"> Reducir destellos y sacudidas</label></p><button onclick="if(confirm('¿Borrar progreso?')){P={unlocked:1,done:{},ans:{}};save();menu()}">Borrar progreso</button><button onclick="menu()">Volver</button></div>`)}
+function cred(){ui(`<div class="pan" style="max-width:520px"><h2>Créditos</h2><p>Diseño, código, arte y audio (sintetizado con Web Audio): generados con Claude.</p><p><small>Los casos clínicos son de muestra y se basan en principios generales de guías OMS; no fueron verificados contra las versiones vigentes ni revisados por una especialista. Antes de usarlos para enseñar, requieren revisión profesional. Es un juego educativo y no sustituye la formación, los protocolos locales ni el juicio clínico.</small></p><button onclick="menu()">Volver</button></div>`)}
+function pause(){if(st!='play')return;st='pause';ui(`<div class="pan"><h2>Pausa</h2><button class="big" onclick="resume()">Continuar</button><button onclick="startLevel(L.n)">Reiniciar nivel</button><button onclick="conf()">Configuración</button><button onclick="menu()">Menú</button></div>`)}
+function resume(){$('ui').innerHTML='';if(L){st='play';$('hud').style.display='flex'}}
+addEventListener('keydown',e=>{ainit();const k=e.key.toLowerCase(),m={arrowup:[0,-1],w:[0,-1],arrowdown:[0,1],s:[0,1],arrowleft:[-1,0],a:[-1,0],arrowright:[1,0],d:[1,0]};
+ if(m[k]&&st=='play'){setDir(m[k]);e.preventDefault()}if((k=='p'||k=='escape')&&(st=='play'))pause();else if((k=='p'||k=='escape')&&st=='pause')resume()});
+document.querySelectorAll('#dp button').forEach(b=>{const f=e=>{e.preventDefault();ainit();if(st=='play')setDir(b.dataset.d.split(',').map(Number))};b.addEventListener('touchstart',f);b.addEventListener('mousedown',f)});
+addEventListener('click',ainit);
+/* ===== v2: música, portada, intro, menú, mapa, personalización ===== */
+let SCN='cover',IS=0,IT0=0,fade=1;const bl='#8b1a2b';
+[1,3,5,7].forEach(i=>PAL[i][1]='#2a1219');
+const MEL=[0,-1,3,-1,7,-1,5,-1,3,-1,0,-1,-2,-1,-4,-1],BS=[0,0,-4,-4,-2,-2,-5,-5];
+function beat2(){if(!AC||!mode)return;const i=bi++,ch=mode=='chase',R=mode=='menu'?220:ch?165:196,s=i%16,m=MEL[s];
+ if(m>=0)tone(R*2*Math.pow(2,m/12),.7,'triangle',mg,.55);
+ if(ch&&s%2)tone(R/2,.12,'sawtooth',mg,.4);
+ if(s%4==0)tone(R/2*Math.pow(2,BS[(i>>2)%8]/12),.9,'sine',mg,.9);
+ if(s%8==0){tone(55,.18,'sine',mg,1);tone(110,.1,'triangle',mg,.5);setTimeout(()=>tone(48,.15,'sine',mg,.7),170)}
+ if(s==8&&i%32<16)tone(R*Math.pow(2,1/12),1.6,'sine',mg,.25);
+ if(ch&&s%4==2)tone(55,.15,'sine',mg,1)}
+sfx.alarm=()=>{for(let i=0;i<4;i++)setTimeout(()=>tone(i%2?600:880,.2,'square',0,.3),i*220)};
+sfx.thud=()=>{tone(70,.35,'sine',0,1,-30);tone(140,.1,'sawtooth',0,.3)};
+const HS=['Corto','Coleta','Rodete','Largo'],HU=[0,0,4,9],HC=['#3b2a2a','#e8c36a','#c0463c','#7a5cc4','#5cc4a8','#f6b8cf'],HCU=[0,0,0,5,14,24],UC=['#b8ecd6','#cbb8f0','#f6b8cf','#fbefb0','#d6303f'],UCU=[0,0,0,8,18],AC_=['Ninguno','Gafas','Estetoscopio','Lazo','Mascarilla'],ACU=[0,0,3,7,12],SK=['#f3d2c1','#d9a882','#a9744f'];
+const nd=()=>Object.keys(P.done).length;
+function hero(x,y,r,t,hurt){const c=P.cu,hc=HC[c.hc],hs=c.hs;g.save();g.translate(x,y+Math.sin(t*10)*1.5);
+ g.fillStyle=hc;if(hs==3){g.beginPath();g.roundRect(-r*1.1,-r*.9,r*2.2,r*2,r*.5);g.fill()}
+ if(hs==1){g.beginPath();g.arc(r*.95,r*.2,r*.35,0,7);g.fill()}
+ g.fillStyle=hurt?'#fff':UC[c.uc];g.fillRect(-r*.75,r*.5,r*1.5,r*.6);g.fillStyle='#fff';g.fillRect(-r*.1,r*.58,r*.2,r*.4);g.fillRect(-r*.3,r*.7,r*.6,r*.16);
+ g.fillStyle=hurt?'#fff':SK[c.sk];g.beginPath();g.arc(0,0,r,0,7);g.fill();
+ g.fillStyle=hc;g.beginPath();g.arc(0,-r*.05,r*1.03,Math.PI,0);g.fill();if(hs==2){g.beginPath();g.arc(0,-r*1.15,r*.38,0,7);g.fill()}
+ g.fillStyle='#222';g.fillRect(-r*.4,-r*.1,r*.18,r*.22);g.fillRect(r*.22,-r*.1,r*.18,r*.22);g.fillStyle='#f08a94aa';g.fillRect(-r*.65,r*.15,r*.25,r*.15);g.fillRect(r*.4,r*.15,r*.25,r*.15);
+ const a=c.ac;g.lineWidth=Math.max(1,r*.08);
+ if(a==1){g.strokeStyle='#222';g.beginPath();g.arc(-r*.32,0,r*.28,0,7);g.stroke();g.beginPath();g.arc(r*.32,0,r*.28,0,7);g.stroke()}
+ if(a==2){g.strokeStyle='#556';g.beginPath();g.arc(0,r*.5,r*.6,0,Math.PI);g.stroke();g.fillStyle='#889';g.beginPath();g.arc(0,r*1.1,r*.16,0,7);g.fill()}
+ if(a==3){g.fillStyle='#d6303f';g.beginPath();g.moveTo(-r*.6,-r*.95);g.lineTo(-r*1.05,-r*1.25);g.lineTo(-r*1.05,-r*.65);g.fill();g.beginPath();g.moveTo(-r*.6,-r*.95);g.lineTo(-r*.15,-r*1.25);g.lineTo(-r*.15,-r*.65);g.fill()}
+ if(a==4){g.fillStyle='#e8f6f0';g.fillRect(-r*.7,r*.12,r*1.4,r*.65)}
+ g.restore()}
+function sky(c1,c2){const gr=g.createLinearGradient(0,0,0,450);gr.addColorStop(0,c1);gr.addColorStop(1,c2);g.fillStyle=gr;g.fillRect(0,0,630,450)}
+function hosp(x,y,w,h,lit){g.fillStyle='#e8d6e0';g.fillRect(x,y,w,h);g.fillStyle='#b8ecd6';g.fillRect(x,y,w,12);for(let i=0;i<4;i++)for(let j=0;j<(h/45|0);j++){g.fillStyle=((i*3+j*5)%7<3)&&lit?'#fbefb0':'#2a2238';g.fillRect(x+14+i*(w-28)/4,y+26+j*42,(w-28)/4-10,26)}
+ g.fillStyle='#d6303f';const cx=x+w/2,cy=y-26;g.fillRect(cx-4,cy-16,8,32);g.fillRect(cx-16,cy-4,32,8);g.fillStyle='#3a2a3a';g.fillRect(cx-16,y+h-34,32,34);g.fillStyle=bl;g.fillRect(x+w*.2,y+h-50,10,50);g.fillRect(x+w*.7,y+h-26,8,26)}
+function drips(t,n){g.fillStyle=bl;for(let i=0;i<n;i++){const x=i*630/n+10,l=20+((i*37)%50)+Math.sin(t+i)*6;g.fillRect(x,0,8,l);g.beginPath();g.arc(x+4,l,6,0,7);g.fill()}}
+function ecg(y,t,c){g.strokeStyle=c;g.lineWidth=3;g.beginPath();for(let x=0;x<630;x+=3){const p=((x+t*120)%210)/210;let v=0;if(p>.4&&p<.45)v=-8;else if(p>.45&&p<.5)v=50;else if(p>.5&&p<.55)v=-24;else if(p>.65&&p<.75)v=-10*Math.sin((p-.65)*31);x?g.lineTo(x,y-v):g.moveTo(x,y)}g.stroke()}
+function fd(){if(fade>0){g.fillStyle='rgba(0,0,0,'+fade+')';g.fillRect(0,0,630,450);fade-=.03}}
+function cover(t){sky('#2b1633','#5a2a46');g.fillStyle='#fff4';for(let i=0;i<30;i++)g.fillRect((i*97)%630,(i*53)%190,2,2);
+ g.fillStyle='#d6303f';g.beginPath();g.arc(520,90,44,0,7);g.fill();hosp(50,175,180,200,true);hosp(410,205,150,170,false);
+ g.fillStyle='#2a2238';g.fillRect(0,372,630,80);g.fillStyle='#3a3050';g.fillRect(0,372,630,6);
+ g.fillStyle='#cfc8d6';g.fillRect(255,398,70,9);g.fillStyle='#b8ecd6';g.fillRect(255,390,70,8);g.fillStyle='#889';[262,318].forEach(x=>{g.beginPath();g.arc(x,416,6,0,7);g.fill()});
+ g.strokeStyle='#cfc8d6';g.lineWidth=3;g.beginPath();g.arc(450,415,13,0,7);g.stroke();g.beginPath();g.moveTo(450,400);g.lineTo(450,370);g.lineTo(466,366);g.stroke();
+ zomb(30,398+Math.sin(t*2)*3,24,ZT[0],t);zomb(150,410,20,ZT[2],t+1);zomb(495,400,22,ZT[4],t+2);zomb(595,402+Math.sin(t*2)*3,25,ZT[1],t+3);zomb(560,340,15,ZT[3],t+4);
+ hero(335,350+Math.sin(t*3)*3,46,0,0);
+ g.textAlign='center';g.font='30px serif';g.fillStyle='#f6b8cf';g.fillText('♥',90,150+Math.sin(t*4)*6);g.fillStyle='#b8ecd6';g.fillText('✚',560,170+Math.sin(t*3)*5);g.fillStyle='#fbefb0';g.beginPath();g.roundRect(215,230+Math.sin(t*2)*4,34,14,7);g.fill();g.fillStyle='#f6b8cf';g.fillRect(232,230+Math.sin(t*2)*4,17,14);
+ g.font='bold 56px "Courier New",monospace';g.lineWidth=9;g.strokeStyle='#5a0f1e';g.strokeText('ÚLTIMO LATIDO',315,118);g.fillStyle='#f6b8cf';g.fillText('ÚLTIMO LATIDO',315,118);
+ g.font='bold 15px monospace';g.fillStyle='#b8ecd6';g.fillText('— sobrevivir también es cuidar —',315,144);ecg(162,t,'#d6303f');drips(t,14);fd()}
+const IN=[['Todo empezó en silencio. Un brote desconocido llenó las urgencias… y las alarmas ya no se detuvieron.',()=>sfx.alarm()],['En pocas horas, los hospitales colapsaron. Quienes cayeron enfermos volvieron a levantarse… sin conciencia.',()=>sfx.thud()],['Dentro, entre pasillos a oscuras, aún quedan pacientes: gestantes, puérperas y recién nacidos que dependen de alguien.',()=>sfx.door()],['Tú eres obstetra. Evita a los infectados, recoge suministros, rescata pacientes y decide con criterio clínico.',()=>sfx.pick()],['Mientras exista un corazón latiendo, hay alguien por quien luchar. Este es… ÚLTIMO LATIDO.',()=>{sfx.thud();setTimeout(sfx.thud,350)}]];
+function intro(){ainit();SCN='intro';IS=-1;nextScene()}
+function nextScene(){IS++;if(IS>=IN.length){menu();return}IT0=performance.now()/1000;fade=1;IN[IS][1]();ui(`<div class="pan" style="align-self:flex-end;margin-bottom:6px;max-width:560px"><p style="margin:4px">${IN[IS][0]}</p><button onclick="nextScene()">SIGUIENTE</button><button onclick="menu()">OMITIR</button></div>`)}
+function introDraw(t){if(t-IT0>6.5)nextScene();const s=Math.max(0,IS);g.textAlign='center';
+ if(s==0){sky('#1d1230','#7a2a40');g.fillStyle='#d6303f';g.beginPath();g.arc(480,90,50,0,7);g.fill();hosp(220,150,190,230,true);g.fillStyle='#2a2238';g.fillRect(0,380,630,70);if((t*3|0)%2){g.fillStyle='rgba(214,48,63,.28)';g.fillRect(0,0,630,450)}}
+ else if(s==1){sky('#1a1028','#43223a');hosp(30,170,170,210,false);g.fillStyle='#2a2238';g.fillRect(0,380,630,70);for(let i=0;i<8;i++)zomb(((i*100+t*28)%760)-60,395+(i%3)*14,22,ZT[i%5],t+i)}
+ else if(s==2){g.fillStyle='#2a2635';g.fillRect(0,0,630,450);g.fillStyle='#3a3548';g.fillRect(0,300,630,150);g.fillStyle=(t*8|0)%9==0?'#222':'#fbefb0';for(let i=0;i<4;i++)g.fillRect(60+i*160,40,70,8);
+  for(let i=0;i<3;i++){const x=70+i*170;g.fillStyle='#cfc8d6';g.fillRect(x,310,100,18);g.fillStyle='#b8ecd6';g.fillRect(x,300,100,10);g.fillStyle='#cbb8f0';g.beginPath();g.arc(x+20,296,13,0,7);g.fill();g.fillStyle='#d6303f';g.font='bold 16px sans-serif';g.fillText('!',x+20,302)}zomb(590,330+Math.sin(t*2)*3,26,ZT[4],t)}
+ else if(s==3){g.fillStyle='#120d1a';g.fillRect(0,0,630,450);const gr=g.createLinearGradient(330,0,630,0);gr.addColorStop(0,'rgba(251,239,176,.55)');gr.addColorStop(1,'rgba(251,239,176,0)');g.fillStyle=gr;g.beginPath();g.moveTo(330,210);g.lineTo(630,60);g.lineTo(630,380);g.fill();hero(220,230+Math.sin(t*3)*3,90,0,0);g.fillStyle='#d6303f';[[560,150],[580,150],[520,330],[540,330]].forEach(p=>g.fillRect(p[0],p[1],6,6))}
+ else{g.fillStyle='#120d1a';g.fillRect(0,0,630,450);ecg(225,t,'#d6303f');const k=1+Math.abs(Math.sin(t*3))*.25;g.save();g.translate(315,110);g.scale(k,k);g.fillStyle='#f6b8cf';g.font='70px serif';g.fillText('♥',0,25);g.restore();g.font='bold 40px "Courier New",monospace';g.fillStyle='#f6b8cf';g.strokeStyle='#5a0f1e';g.lineWidth=6;g.strokeText('ÚLTIMO LATIDO',315,330);g.fillText('ÚLTIMO LATIDO',315,330)}
+ drips(t,12);fd()}
+function coverScreen(){G=false;SCN='cover';st='menu';mode='menu';ui(`<div style="align-self:flex-end;margin-bottom:16px"><button class="big" onclick="ainit();intro()">ENTRAR</button></div>`)}
+function menu(){G=false;SCN='cover';st='menu';mode='menu';$('hud').style.display='none';$('dp').className='';
+ ui(`<div style="align-self:flex-end;margin-bottom:8px;display:flex;flex-wrap:wrap;justify-content:center;max-width:94%"><button class="big mn" onclick="startLevel(Math.min(40,P.unlocked))">JUGAR${P.unlocked>1?' (nivel '+P.unlocked+')':''}</button><button class="mn" onclick="levels()">NIVELES</button><button class="mn" onclick="cust()">PERSONALIZAR PERSONAJE</button><button class="mn" onclick="cases()">CASOS CLÍNICOS</button><button class="mn" onclick="conf()">CONFIGURACIÓN</button></div>`)}
+function levels(){const d=nd();let h=`<div class="pan" style="width:min(94%,600px)"><h2>Mapa de progresión · ${d}/40</h2><div class="bar" style="width:100%"><span style="display:block;height:100%;background:#b8ecd6;width:${d*2.5}%"></span></div>`;
+ for(let s=0;s<8;s++){let c=0,b='';for(let i=1;i<=5;i++){const n=s*5+i;if(P.done[n])c++;b+=`<button ${n>P.unlocked?'disabled':''} style="margin:2px;padding:7px 9px;background:${P.done[n]?'#7fe0a8':n>P.unlocked?'#555':'#f6b8cf'}" onclick="startLevel(${n})">${n>P.unlocked?'🔒':n}</button>`}
+  h+=`<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;border-top:1px solid #cbb8f055;margin-top:4px"><small style="text-align:left;flex:1;min-width:150px">Etapa ${s+1}: ${STG[s]} (${c}/5)</small><span>${b}</span></div>`}
+ ui(h+'<button onclick="menu()">Volver</button></div>')}
+function pc(k,i){P.cu[k]=i;save();cust()}
+function cust(){const c=P.cu,d=nd();const row=(lab,k,arr,un,col)=>`<div style="margin:4px 0"><small>${lab}</small><br>${arr.map((v,i)=>{const lk=un[i]>d;return `<button ${lk?'disabled':''} style="${col?'background:'+v+';width:34px;height:34px;padding:0;':''}${c[k]==i?'outline:3px solid #fff;':''}" onclick="pc('${k}',${i})">${col?(lk?'🔒':''):(lk?'🔒 niv. '+un[i]:v)}</button>`}).join('')}</div>`;
+ ui(`<div class="pan" style="width:min(94%,480px)"><h2>Personalizar protagonista</h2><canvas id="pv" width="130" height="130" style="width:130px;height:130px;background:#2a2238;border-radius:12px"></canvas><small><br>Completa niveles para desbloquear más opciones (${d}/40)</small>${row('Peinado','hs',HS,HU)}${row('Color de cabello','hc',HC,HCU,1)}${row('Uniforme','uc',UC,UCU,1)}${row('Accesorio','ac',AC_,ACU)}${row('Piel','sk',SK,[0,0,0],1)}<button onclick="menu()">Listo</button></div>`);
+ const sv=g;g=$('pv').getContext('2d');hero(65,68,40,0,0);g=sv}
+function conf(){ui(`<div class="pan"><h2>Configuración</h2><p>Música <input type="range" min="0" max="1" step=".05" value="${S.mus}" oninput="S.mus=+this.value;vol();save()"></p><p>Efectos <input type="range" min="0" max="1" step=".05" value="${S.sfx}" oninput="S.sfx=+this.value;vol();save();sfx.pick()"></p><p><label><input type="checkbox" ${S.calm?'checked':''} onchange="S.calm=this.checked;save()"> Reducir destellos y sacudidas</label></p><button onclick="cred()">Créditos y aviso</button><button onclick="if(confirm('¿Borrar progreso?')){P={unlocked:1,done:{},ans:{},cu:{hs:0,hc:0,uc:0,ac:0,sk:0}};save();menu()}">Borrar progreso</button><button onclick="menu()">Volver</button></div>`)}
+const _d=draw;draw=function(t){_d(t);if(G&&L){g.fillStyle='rgba(139,26,43,.3)';for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)if(!L.m[y][x]&&(x*13+y*7+L.n*5)%11==0){g.beginPath();g.arc(x*T+15+(x%3)*3,y*T+15,4+(y%3),0,7);g.fill()}}};
+coverScreen();requestAnimationFrame(loop);
+</script></body></html>
